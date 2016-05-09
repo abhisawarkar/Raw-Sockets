@@ -1,0 +1,738 @@
+#!/usr/bin/python
+
+import socket
+import struct
+import subprocess
+from struct import *
+import sys
+import urlparse
+import time
+import curses.ascii 
+import random
+import urllib2
+from urlparse import urlparse
+
+
+# Define global variables
+
+def global_variable():
+
+	global src_ip_add
+	global des_ip_add
+	global random_src_port
+	global cwsd
+	global ssthresh
+	cwsd=1
+	ssthresh=0
+
+global_variable()
+
+# Define empty dictionary
+
+sequence_data={} 
+
+
+# Set the source port as random
+
+random_src_port=random.randint(2000,5000) 		
+
+
+# Attach " http " to the url if not already present 
+			
+arg_passed = sys.argv[1]						
+
+if "http://" not in arg_passed:					
+	arg_passed = "http://" + arg_passed
+
+
+# Resolve Destination IP Address
+
+arg = urlparse(arg_passed)
+d_ip = str(arg.netloc)
+des_ip_add = socket.gethostbyname(d_ip)
+
+
+# Resolve Source IP Address
+
+p = subprocess.Popen(['ifconfig'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+out,err = p.communicate()
+src_ip_add=(((out.split("\n"))[1].split(":"))[1].split(" "))[0]
+
+
+# Check if the number of arguments are valid or not
+
+if len(sys.argv) == 1:
+	print "Error: No URL passed / Invalid file call" 		
+	sys.exit()
+
+elif len(sys.argv) > 2:
+	print "Invalid number of arguments passed"
+
+
+# Assign file name handling the conditions mentioned for URL path
+
+a1= urlparse(arg_passed)
+file1=a1.path 
+
+if file1=='':
+	file3='index.html'
+else:
+	fi=list(file1)
+	fi1=len(fi)
+	
+	if fi[fi1-1]=="/":
+		file3='index.html'
+	
+	else:
+		file2=file1.split("/")
+		fil=len(file2)
+		file3= file2[fil-1]
+
+
+# Function to implement congestion window mechanism 
+
+def set_cws():
+
+	global cwsd
+	global ssthresh
+
+	if cwsd < 1000:
+		if ssthresh == 0:
+			cwsd = cwsd*2
+		else:
+			if cwsd < ssthresh:
+				cwsd = cwsd*2
+			else:
+				cwsd = cwsd + 1
+	else:
+		set_ssthresh()
+		
+
+
+# Set threshold vlaue in case of congestion window
+
+def set_ssthresh():
+
+	global cwsd
+	global ssthresh
+
+	ssthresh = cwsd/2
+	cwsd = 1
+
+
+# Create IP header
+
+def ip_header():
+
+	dest = socket.inet_aton(des_ip_add)
+	source = socket.inet_aton(src_ip_add)
+	version = 4
+	offset = 0
+	service_type = 0
+	protocol = 6 	
+	len_head = 5
+	length = 0
+	checksum = 0
+	version_len_headgth = (version<<4) + len_head
+	
+	head_ip = pack('!BBHHHBBH4s4s' ,version_len_headgth, service_type, length, 51515, offset, 255, protocol, checksum, source, dest)
+
+	return head_ip
+
+
+# Function created for HEX to Binary conversion ; helpful in TCP checksum calculation 
+
+def hex_to_binary(var):
+
+	source_address = socket.inet_aton(src_ip_add)
+	
+	d3=hex_to_binary1(var)
+		
+	u=d3[2:4]
+		
+	u1=d3[4:]
+		
+	u2='0x'+u1+u
+		
+	u3=int(u2,16)
+	
+	return u3
+
+
+# Another function created for HEX to Binary conversion ; helpful in TCP checksum calculation 
+
+def hex_to_binary1(var):
+	
+	global seq_rec
+	global ack_rec
+	global set_syn
+	global set_ack
+	global data_rec
+	global set_push
+	global fin1
+	global set_fin
+	global ack_1
+
+	source_address = socket.inet_aton(src_ip_add)
+	no_of_bits = var.split('b')
+	nb=no_of_bits[1]
+		
+	#j=len(d)
+		
+	if len(nb) <= 16:
+		
+		nb1=nb.rjust(16,'0')   
+		
+		bit_bin='0b'+nb1
+	        	
+	bit_bin=bit_bin.replace('0','r')
+	bit_bin=bit_bin.replace('1','0')
+	bit_bin=bit_bin.replace('r','1')
+	bit_bin=bit_bin.replace('1b','0b')
+	
+	d2= int(bit_bin,2)
+	
+	d3=hex(d2)
+	
+	return d3
+
+
+# Function to check IP checksum of incoming packet
+
+def check_ip(f):
+
+	source_address = socket.inet_aton(src_ip_add)
+	g=list()
+
+	for value in f:
+		g.append(value)
+
+	p=sum(g)
+	ip_check=hex(p)
+	j=len(ip_check)-2
+
+	if j==4:
+		d23=bin(ip_check)
+		a=hex_to_binary(d23)	
+	else:
+		while j>4:
+			
+			b1= int(ip_check[-4:],16)
+			c1= int(ip_check[-5],16)
+			bc=b1+c1
+
+			d= hex(bc)
+			d1=bin(bc)
+			
+			a=hex_to_binary1(d1)
+			
+			j=len(a)-2
+
+	return a
+
+
+# Create master TCP header for sending acknowledgements to 
+
+def master_tcp_header(seq_num_send,ack_num_send,set_fin,set_syn,set_push,set_ack):
+	
+	source = random_src_port  
+	dest = 80   	
+	seq = seq_num_send
+	ack_1 = ack_num_send
+	doff = 5    
+	fin = set_fin
+	syn = set_syn
+	rst = 0
+	psh = set_push
+	ack = set_ack
+	check = 0
+	urg_ptr = 0
+	urg=0
+	offset_res = (doff << 4) + 0
+	window = socket.htons(5840)   
+	
+	flags_tcp = fin + (syn << 1) + (rst << 2) + (psh <<3) + (ack << 4) + (urg << 5)
+	
+	head_tcp = pack('!HHLLBBHHH', source, dest, seq, ack_1, offset_res, flags_tcp, window, check, urg_ptr)
+	
+	data_to_send=''
+	tcp_head_length = len(head_tcp) + len(data_to_send)
+	source_address = socket.inet_aton(src_ip_add)
+	dest_address = socket.inet_aton(des_ip_add)
+	placeholder = 0
+	check=0
+	protocol = socket.IPPROTO_TCP
+	
+	psh = pack('!4s4sBBH' , source_address , dest_address , placeholder , protocol , tcp_head_length);
+	
+	z=unpack("!HHHHHH",psh)
+	f=unpack('!HHHHHHHHHH',head_tcp)
+	
+	g=list()
+	z1=list()
+	g1=list()
+	p=list()
+	gt=list()
+
+	for value in f:
+		g.append(value)
+	
+	for val in z:
+		z1.append(val)
+	
+	if set_push == 1:
+		
+		if len(data()) % 2 == 0:
+			r="!"+"H"*(len(data())/2)
+			p=unpack(r,data())
+
+		elif len(data())%2!=0:
+			print len(data())
+			
+			print len(data())
+			r1="!B"*len(data())
+			open=unpack(r1,data())
+			print open
+			s=list()
+			for p in open:
+				s.append(pratik)
+			print s
+			s.insert('00000000')
+	
+			val=''
+			for value in sanket:
+				val+=value
+			print value
+			cf=pack(r1,value)
+			r3='!'+'H'*(len(cf)/2)	
+			p=unpack(r3,cf)
+	
+		
+		for t in p:
+			gt.append(t)
+	
+		if len(data()) != 0:
+			if len(data()) % 2 == 0:
+				
+				sum_data=sum(gt)+16
+			else:
+				sum_data=sum(gt)+2566
+	else:
+
+		sum_data=0
+
+	p=sum(g)
+	z2=sum(z1)
+	t_check=p+z2+sum_data
+	tcp_check=hex(t_check)
+	j=len(tcp_check)-2
+
+	if j==4:
+		d23=bin(tcp_check)
+		a=hex_to_binary(d23)
+	else:
+		while j>4:
+	
+			b1= int(tcp_check[-4:],16)
+			c1= int(tcp_check[-5],16)
+			bc=b1+c1
+			d= hex(bc)	
+			d1=bin(bc)
+			a=hex_to_binary(d1)
+			a32=hex(a)
+			j=len(a32)-2
+	
+	checksum=a
+
+	final_tcp = pack('!HHLLBBH', source, dest, seq, ack_1, offset_res, flags_tcp, window)+pack('H',checksum)+pack('!H', urg_ptr)
+
+	return final_tcp
+
+
+# Function to calculate TCP checksum of incoming packets
+
+def tcp_check(l_data,tcp_header):
+
+	if l_data=="":
+		tcp_length = len(tcp_header)
+	else:
+		tcp_length = len(tcp_header) + l_data
+	
+	psh = pack('!4s4sBBH' , src_ip_add , des_ip_add , 0 , socket.IPPROTO_TCP , tcp_length);
+
+	z=unpack("!HHHHHH",psh)
+
+	z1=list()
+	z3=list()
+	
+	for val in z:
+		z1.append(val)
+	
+	z2=sum(z1)
+
+	for val1 in tcp_header:
+		z3.append(val1)
+	
+	z4=sum(z3)
+	r_check=z2+z4
+	r1_check=hex(r_check)
+	j=len(r1_check)-2
+	
+	if j==4:
+		d23=bin(r_check)
+		a=hex_to_binary(d23)
+			
+	else:
+		while j>4:
+
+			b1= int(r1_check[-4:], 16)		
+			c1= int(r1_check[-5],16)
+			
+			bc=b1+c1
+			d= hex(bc)
+			d1=bin(bc)
+			
+			a=hex_to_binary(d1)
+			
+			a23=hex(a)
+			uf=a23[2:4]			
+			uf1=a23[4:]
+			uf2='0x'+uf1+uf
+			uf3=int(uf2,16)
+			j=len(a23)-2
+	
+		return uf3			
+			
+	
+# Create pseudo headers to calculate checksum for all other packets - SYN, ACK, GET
+	
+def pseudo_header(seq_num_send,ack_num_send,set_fin,set_syn,set_push,set_ack):
+	
+	source_address = socket.inet_aton(src_ip_add)
+	dest_address = socket.inet_aton(des_ip_add)
+	
+	placeholder = 0
+	check=0
+	protocol = socket.IPPROTO_TCP
+	
+	if set_push == 1:
+
+		tcp_head_length = len(tcp_header(seq_num_send,ack_num_send,check,set_fin,set_syn,set_push,set_ack)) + len(data())
+	else:
+		tcp_head_length = len(tcp_header(seq_num_send,ack_num_send,check,set_fin,set_syn,set_push,set_ack))
+
+	psh = pack('!4s4sBBH' , source_address , dest_address , placeholder , protocol , tcp_head_length);	
+
+	z=unpack("!HHHHHH",psh)
+	
+	f=unpack('!HHHHHHHHHH',tcp_header(seq_num_send,ack_num_send,check,set_fin,set_syn,set_push,set_ack))
+	
+	g=list()
+	z1=list()
+	g1=list()
+	p=list()
+	gt=list()
+
+	for value in f:
+		g.append(value)
+	
+	for val in z:
+		z1.append(val)
+	
+	if set_push == 1:
+		if len(data()) % 2 == 0:
+	
+			r="!"+"H"*(len(data())/2)
+		else:
+			r="!"+"H"*(len(data())/2)+"B"
+			 
+		p=unpack(r,data())
+
+		for t in p:
+			gt.append(t)
+
+		if len(data()) != 0:
+			if len(data()) % 2 == 0:
+	
+				sum_data=sum(gt)+16
+			else:
+				sum_data=sum(gt)+2566
+	else:
+		sum_data=0
+
+	p=sum(g)
+	z2=sum(z1)
+	t_check=p+z2+sum_data
+	tcp_check=hex(t_check)
+	j=len(tcp_check)-2
+	
+	if j==4:
+		d23=bin(tcp_check)
+		a=hex_to_binary(d23)
+	else:
+		while j>4:
+			
+			b1= int(tcp_check[-4:], 16)
+			c1= int(tcp_check[-5],16)
+			bc=b1+c1
+			d= hex(bc)	
+			d1=bin(bc)
+			a=hex_to_binary(d1)
+			a32=hex(a)
+			j=len(a32)-2
+	
+	return tcp_header(seq_num_send,ack_num_send,a,set_fin,set_syn,set_push,set_ack)
+
+
+
+# Create TCP Header for all other packets - SYN, ACK, GET
+
+def tcp_header(seq_num_send,ack_num_send,check_sum,set_fin,set_syn,set_push,set_ack):
+	
+	source_address = socket.inet_aton(src_ip_add)
+	source = random_src_port  
+	dest = 80  
+	doff = 5 
+	fin = set_fin
+	syn = set_syn
+	rst = 0
+	psh = set_push
+	ack = set_ack
+	urg = 0
+	seq = seq_num_send
+	ack_1 = ack_num_send
+	window = socket.htons(5840)
+	check = check_sum
+	urg_ptr = 0
+	offset_res = (doff << 4) + 0
+	flags = fin + (syn << 1) + (rst << 2) + (psh <<3) + (ack << 4) + (urg << 5)
+
+	head_tcp = pack('!HHLLBBH', source, dest, seq, ack_1, offset_res, flags, window)+pack('H',check)+pack('!H', urg_ptr)
+ 		
+	return head_tcp
+
+
+# Create data for GET Response 
+
+def data():
+	
+	send_get="GET "+str(sys.argv[1])+" HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"
+	return send_get
+
+
+# Create segment and send a SYN packet
+
+ss = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+segment=ip_header()+pseudo_header(0,0,0,1,0,0)
+ss.sendto(segment,(des_ip_add,80))
+time_start=time.time()
+
+# Receive a SYN-ACK packet
+
+while True:
+	
+	s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+	rec_pack=s.recvfrom(65535)
+	rec_pack = rec_pack[0]
+	
+	ip_header_rec = rec_pack[0:20]
+   	head_ip_up = unpack('!BBHHHBBH4s4s' , ip_header_rec)
+	version_h_ip = head_ip_up[0]
+	version = version_h_ip >> 4
+	h_ip = version_h_ip & 0xF
+   	head_ip_up_length = h_ip * 4
+	s_addr = socket.inet_ntoa(head_ip_up[8]);
+
+	tcp_header_rec = rec_pack[head_ip_up_length:head_ip_up_length+20] 
+	head_tcp_up = unpack('!HHLLBBHHH' , tcp_header_rec)
+	dest_port = head_tcp_up[1]
+	seq_rec = head_tcp_up[2]
+	ack_rec = head_tcp_up[3]
+	tcp_rec_flags = head_tcp_up[3]
+	
+
+# Check if the packet is received within the 3 minutes of send data
+
+	if tcp_rec_flags == 18: 
+		
+		end_time = time.time()
+	
+		if end_time - start_time >= 180:
+		
+			print "\nTime-out Error: No response from server within 3 minutes"
+			sys.exit()
+
+
+# Check if the incoming packet is designated for my port from destination requested
+
+	if dest_port == random_src_port and s_addr == des_ip_add:
+
+
+# Create a segment and send an ACK to SYN-ACK 
+	
+		set_cws()
+		ss = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+		segment=ip_header()+pseudo_header(ack_rec,seq_rec+1,0,0,0,1)
+		ss.sendto(segment,(des_ip_add,80)) 
+		break
+
+
+# Create segment and send a GET request to fetch the mentioned URL
+
+ss = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+segment=ip_header()+pseudo_header(ack_rec,seq_rec+1,0,0,1,1)+data()
+ss.sendto(segment,(des_ip_add,0)) 
+
+
+# Open a receive socket and try to catch the packet intended for my port and IP address
+
+socket_rec = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+
+while True:
+	
+	rec_pack_1 = socket_rec.recvfrom(65535)
+
+# Unpack IP header
+
+	rec_pack_1 = rec_pack_1[0]
+	ip_header_rec_1=rec_pack_1[0:20]
+	
+	head_ip_up = struct.unpack('!BBHHHBBH4s4s' , ip_header_rec_1)
+	version_ip_len_head = head_ip_up[0] 				
+	version_ip = version_ip_len_head >> 4				
+	IP_len_head = version_ip_len_head & 0xF				
+	IP_Tot_len_head = IP_len_head * 4									
+	a_src_ip = socket.inet_ntoa(head_ip_up[8])
+
+
+# Store received checksum of IP header in a variable and check for its correctness; else raise an exception
+
+	head_ip_up_check=head_ip_up[7]
+
+	mix = struct.pack('!BBHHHBBH4s4s' ,head_ip_up[0],head_ip_up[1],head_ip_up[2],head_ip_up[3],head_ip_up[4],head_ip_up[5],head_ip_up[6],0,head_ip_up[8],head_ip_up[9])
+
+	more = unpack('!HHHHHHHHHH',mix)
+		
+	if hex(head_ip_up_check) != check_ip(more):
+	
+		print "Error: Wrong incoming IP checksum"
+		sys.exit()	
+
+
+# Unpack TCP header
+	
+	head_tcp_up_2 = struct.unpack('!HHLLBBHHH' , rec_pack_1[IP_Tot_len_head : IP_Tot_len_head+20])
+	port_d = head_tcp_up_2[1]  				
+	seq_tcp_rec = head_tcp_up_2[2]					
+	ack_tcp_rec = head_tcp_up_2[3]					
+	TCP_len_head_Res = head_tcp_up_2[4]					
+	TCP_len_head = TCP_len_head_Res >> 4				
+	
+
+# Store received TCP checksum in a variable and check for its correctness; else raise an exception
+
+	TCP_head_size = IP_Tot_len_head + TCP_len_head * 4		
+	TCP_data_rec = len(rec_pack_1) - TCP_head_size	
+
+	tcp_check_sum=head_tcp_up_2[7]
+
+	if TCP_head_size == 20: 
+
+		head_tcp_check_1 = struct.pack('!HHLLBBHHH',head_tcp_up_2[0],head_tcp_up_2[1],head_tcp_up_2[2],head_tcp_up_2[3],head_tcp_up_2[4],head_tcp_up_2[5],head_tcp_up_2[6],0,head_tcp_up_2[8])
+
+		head_tcp_check = unpack('!HHHHHHHHHH',head_tcp_check_1)
+
+		if tcp_check(TCP_data_rec,head_tcp_check) != tcp_check_sum:
+		
+			print "Error: Wrong incoming TCP checksum"
+
+
+
+# Collect data for incoming packets destined for my port and coming from designated IP address ; else discard packets 
+
+	if port_d == random_src_port and a_src_ip == des_ip_add and TCP_data_rec>0:
+	
+		set_cws()
+		
+		data_to_send_S = rec_pack_1[TCP_head_size:]
+		
+		sequence_data[seq_tcp_rec] = data_to_send_S
+
+		data_to_send_2 = ''
+
+
+# Create segment for ACK'ing the incoming data with correct acknowledgement number
+
+		segment_ack=ip_header()+master_tcp_header(ack_tcp_rec, seq_tcp_rec+TCP_data_rec, 0, 0, 0, 1)+ data_to_send_2
+		
+
+# Open socket and try sending an acknowledgement  
+
+		try:
+			ss = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+		
+		except socket.error, msg:
+		
+			print 'Error: Socket cannot be created'
+			sys.exit()
+		
+		ss.sendto(segment_ack,(des_ip_add,80)) 
+
+
+# Check if the FIN flag is set in an incoming packet and create a FIN packet to ACk it
+		
+	if (head_tcp_up_2[5] == 17 or head_tcp_up_2[5] == 25) and port_d == random_src_port and a_src_ip == des_ip_add and TCP_data_rec == 0:
+		
+		segment_fin=ip_header()+master_tcp_header(ack_tcp_rec, seq_tcp_rec+1,1,0,0,1)
+		
+
+
+# Open a socket and try sending the FIN packet to the server
+
+		try:
+			ss = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+		
+		except socket.error, msg:
+		
+			print 'Error: Socket cannot be created'
+		
+			sys.exit()
+		
+		ss.sendto(segment_fin,(des_ip_add,80)) 
+
+		break
+
+
+# In-order packet delivery of data ; sort packets and write them in a file
+
+data_sorted = sorted(sequence_data.keys())
+new_file = open(file3, "w")
+num = 0
+
+for value in data_sorted:
+	
+	if num == 0:
+
+		fetch = sequence_data[value]
+	        new_file.writelines(fetch.split('\r\n\r\n')[1])
+		variable=fetch.split('\r\n\r\n')[0]
+	        num = num + 1
+	else:
+	        new_file.writelines(sequence_data[value])   
+	
+new_file.close()
+
+
+# Check if the HTTP Response from the sever is 200 OK ; else raise an error and exit
+
+http_check = '200 OK'
+
+if http_check not in variable:
+	
+	print " Error: Wrong HTTP response code "
+	sys.exit()
+	
+ 
+
+
+
